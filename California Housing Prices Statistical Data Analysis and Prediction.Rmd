@@ -1,0 +1,1056 @@
+---
+title: "STAT 420: Data Analysis Project"
+author: "Anant Ashutosh Sharma, Harpreet S. Siddhu"
+date: "August 06, 2021"
+output:
+  html_document:
+    highlight: tango
+    toc: yes
+    theme: flatly
+  pdf_document:
+    fig_caption: yes
+    highlight: tango
+    toc: yes
+  word_document:
+    toc: yes
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+options(scipen = 1, digits = 4, width = 80)
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+# **Introduction**
+
+**Can We Use Statistics To Predict House Prices?**
+
+*Using Median house prices for California districts derived from the 1990 census*
+
+The dataset which is being used in this study is publicly available and has been taken from Kaggle. The dataset is
+named as **"California Housing Prices"** and can be accessed as a csv file at
+https://www.kaggle.com/camnugent/california-housing-prices. 
+
+Originally, the dataset was made available at the Statistics Library in CMU on the StatLib platform as
+`housing.zip`. The original dataset can be access at http://lib.stat.cmu.edu/datasets/ under the names `housing`. 
+
+
+## **Dataset**\
+A snippet. (Only first few columns).  
+
+```{r kable,message=FALSE,echo=FALSE,warning=FALSE}
+# Libraries, Helpers
+library(readr)
+library(faraway)
+library(MASS)
+library(ggplot2)
+library(ggmap)
+library(rpart)
+library(rpart.plot)
+library(leaps)
+library(tree)
+library(ggplot2)
+library(corrplot)
+library(lmtest)
+library(formatR)
+library(tidyverse)
+library(caret)
+library(kableExtra)
+library(gclus)
+library(leaps)
+
+
+
+housing = read.csv('housing.csv')
+housing$ocean_proximity = as.factor(housing$ocean_proximity)
+housingdata = housing[complete.cases(housing),]
+housingSample = housingdata[1:5, 1:6]
+
+housingSample %>%
+  kbl(caption = "California Housing Data 1990") %>%
+  kable_paper("hover", full_width = F)
+
+```
+
+## **Description**\
+The California Housing Prices dataset provides the median house prices for California districts derived from the
+1990 census data. It contains one row per census block group. A block group is the smallest geographical unit for
+which the U.S. Census Bureau publishes sample data (a block group typically has a population of 600 to 3,000
+people). 
+
+
+The data contains 20640 rows. The variable that we want to predict is "Median House Value". The rest are
+predictors and covariates. 
+
+
+1.    Longitude: A measure of how far west a house is. The higher value of this parameter means farther west.
+The California longitude value ranges from: 114° 8' W to 124°. 
+
+2.    Latitude: A measure of how far north a house is. The higher value of this parameter means farther north.
+The California Latitude value ranges from: 32° 30' N to 42° N
+
+3.    Housing Median Age: Median age of a house within a block (a block has population of around 600 to 3000
+people). The lower number for this parameter means the building is newer. 
+
+4.    Total Rooms: Total number of rooms among all houses within a block.
+
+5.    Total Bedrooms: Total number of bedrooms among all houses within a block.
+
+6.    Population: Total number of people residing within a block.
+
+7.    Households: Total number of households, a group of people residing within a home unit, for a block.
+
+8.    Median Income: Median income for households within a block of houses (measured in tens of thousands of US
+Dollars)
+
+9.    Median House Value: Median house value for households within a block (measured in US Dollars)
+
+10.   Ocean Proximity: Location of the house w.r.t ocean/sea. `Ocean_proximity` indicating (very   roughly)
+whether each block group is near the ocean, near the Bay area, inland or on an island. This parameter will allows
+us include and interpret the categorical variable while regressing the dataset.
+
+The purpose of creating a model using this data is to allow people to get an confidence interval of the expected
+price for any house which might help them close a deal and complete a transaction successfully. The end goal of
+the model is to predict the subject of our study (House Prices).
+
+
+\newpage
+## **Data Cleaning & Preparation**\
+  
+Lets first call the "Summary" to see of the dataset - 
+```{r warning=FALSE,message=FALSE,tidy=TRUE}
+summary(housingdata)
+
+```
+
+We have complete records in `Housingdata` i.e. no missing values. `ocean_proximity` is the categorical variable. 
+
+**Create train and test set of data**
+
+```{r warning=FALSE,message=FALSE,tidy=TRUE}
+
+set.seed(1738) # Set a random seed so that same sample can be reproduced in future runs
+
+# Splitting the data into 80:20 ratio i.e. 80% records for training and 20% records for test
+split_80 = sample.int(n = nrow(housingdata), size = floor(.8*nrow(housingdata)), replace = F)
+trainset = housingdata[split_80, ] 
+testset  = housingdata[-split_80, ] 
+
+```
+
+
+\newpage
+# **Methods**
+
+## **Exploratory Data Analysis**\
+
+Lets understand the data by visualizing it.
+
+### **Map Of Housing Prices in California**\
+
+```{r message=FALSE, r,warning=FALSE, tidy=TRUE}
+california_map = get_stamenmap( bbox = c(left = -128.7 , bottom =31.1 , right = -104.8 , top = 42.9), 
+                                zoom = 4, maptype = "terrain")
+
+```
+```{r fig.align="center", fig.width=15, warning=FALSE,message=FALSE,tidy=TRUE}
+
+ggmap(california_map) +
+  theme_void() + 
+  geom_point(data = housingdata, 
+    aes(x = longitude, y = latitude, 
+    col = median_house_value/1000),size = 2.0) + 
+    scale_color_viridis_c(option = "D", direction = -1) +
+    theme_dark() + theme(legend.background =  element_blank(),  
+    plot.background = element_rect(fill = "grey90"),
+    text =element_text(size=16),
+    plot.margin = unit(c(-1, 15, -1, 35), "pt")) + 
+    labs(x = "Longitude", y = "Latitude", color='House Prices in per thousand dollars') + 
+    ggtitle("California Housing Prices 1990 Census")
+
+```
+**Some visual insights:**
+
+1. Farther west towards the ocean proximity the house prices are costly compared houses located near  in the city.
+
+
+2. Los Angeles and San Francisco are two cities in California where house prices are way higher compared to other
+cities. 
+
+3. The mid-east of California seem little sparse compare to north and south and thats why the house prices are
+lower in those areas.
+
+***
+
+\newpage
+
+### **Categorical variable overview**\
+
+Number of Houses Based on Ocean Proximity (Categorical Data Variable)
+
+```{r Ocean Proximity, fig.height=10, fig.width=15, warning=FALSE,message=FALSE,tidy=TRUE}
+# count number of values for ocean_proximity
+x = table(housingdata["ocean_proximity"])
+barplot(x[order(x, decreasing = TRUE)], col = "lightblue")
+
+```
+
+We can see from the above count that mostly people prefer to live near OCEAN coast and probably that is another
+reason for higher prices in those area. 
+
+***
+
+\newpage
+### **Distributions for median house value**\
+
+```{r warning=FALSE,message=FALSE,tidy=TRUE}
+prices = housingdata$median_house_value/1000
+hist(prices, 
+     xlab   = "House Value (In Thousand Dollars)",
+     ylab   = "Density",
+     main   = "Histogram of California House Prices",
+     col    = "lightblue",
+     border = "darkorange",
+     prob = TRUE, 
+     breaks = 50)
+
+d = density(prices, cut = 0)
+lines(d, lwd=2,col="blue")
+
+```
+**House value summary statistics**
+
+```{r}
+summary(housingdata$median_house_value)
+```
+
+There seems a weird spike in the house value in the right most side on the histogram. Seems like the houses in the bay area worth more than 500,000 dollars even in 90's when this data was collected.
+
+***
+
+\newpage
+
+
+### **Scatterplots of Predictor Vs. Response variable**
+
+#### **Housing Median Age Vs. House Value**
+
+```{r Median Age, fig.height=5, fig.width=10, warning=FALSE,message=FALSE,tidy=TRUE}
+#Median Age
+housing_median_age_data = as.data.frame(cbind(housingdata$housing_median_age, 
+                                              housingdata$median_house_value))
+housing_median_age_data = housing_median_age_data[complete.cases(housing_median_age_data),]
+colnames(housing_median_age_data) = c("House_Median_Age","House_Values")
+priceAgeModel = lm(House_Values ~ House_Median_Age, data = housing_median_age_data)
+pred.Prices = predict(priceAgeModel, data = housing_median_age_data)
+
+p1 <- ggplot(housing_median_age_data, aes(x = House_Median_Age, y = House_Values))
+p1 + geom_point(col="blue") + geom_line(aes(y = pred.Prices,col="orange"))+ geom_smooth() 
+  
+```
+
+The above plot seems uniform and not very interesting to us.Seems like we have all sort of houses from new
+to old in all age ranges. 
+
+
+\newpage
+
+#### **Total Rooms Vs. House Value**\
+
+```{r fig.height=5, fig.width=10,warning=FALSE,message=FALSE,tidy=TRUE}
+total_rooms = as.data.frame(cbind(housingdata$total_rooms, housingdata$median_house_value))
+total_rooms = total_rooms[complete.cases(total_rooms),]
+
+colnames(total_rooms) = c("total_rooms","Prices")
+priceRoomModel = lm(Prices ~ total_rooms, data = total_rooms)
+pred.Prices = predict(priceRoomModel, data = total_rooms)
+
+p1 <- ggplot(total_rooms, aes(x = total_rooms, y = Prices))
+p1 + geom_point(col="blue") + geom_line(aes(y = pred.Prices,col="orange"))+ geom_smooth() 
+
+```
+
+This seems interesting. There is relatively higher variance in house prices with less number of rooms for a house in a particular block. 
+
+
+\newpage
+
+#### **Population Vs. House Value**\
+
+```{r fig.height=5, fig.width=10,warning=FALSE,message=FALSE,tidy=TRUE}
+population = as.data.frame(cbind(housingdata$population, housingdata$median_house_value))
+population = population[complete.cases(population),]
+
+colnames(population) = c("population","Prices")
+pricePopulationModel = lm(Prices ~ population, data = population)
+pred.Prices = predict(pricePopulationModel,data = population)
+
+p1 <- ggplot(population, aes(x = population, y = Prices))
+p1 + geom_point(col="blue") + geom_line(aes(y = pred.Prices,col="orange"))+ geom_smooth() 
+
+```
+
+The density of block population is more in the cheaper houses and as house value increasing the density decreasing. 
+Based on this information, populations seems a very interesting predictor for predicting the house prices. 
+
+***
+
+\newpage
+
+#### **Median Income Vs. House value**\
+
+```{r fig.height=5, fig.width=10,warning=FALSE,message=FALSE,tidy=TRUE}
+median_income = as.data.frame(cbind(housingdata$median_income, housingdata$median_house_value))
+median_income = median_income[complete.cases(median_income),]
+
+colnames(median_income) = c("median_income","Prices")
+priceIncomeModel = lm(Prices ~ median_income, data = median_income)
+pred.Prices = predict(priceIncomeModel, data = median_income)
+
+p1 <- ggplot(median_income, aes(x = median_income, y = Prices))
+p1 + geom_point(col="blue") + geom_line(aes(y = pred.Prices,col="orange"))+ geom_smooth() 
+
+```
+
+High income, costly house (high house value) intuitive. 
+
+***
+\newpage
+
+#### **BedRooms  Vs. House value**\
+
+```{r fig.height=5, fig.width=10,warning=FALSE,message=FALSE,tidy=TRUE}
+total_bedrooms   = as.data.frame(cbind(housingdata$total_bedrooms  , housingdata$median_house_value))
+total_bedrooms   = total_bedrooms  [complete.cases(total_bedrooms ),]
+
+colnames(total_bedrooms ) = c("total_bedrooms","Prices")
+priceBedRoomModel = lm(Prices ~ total_bedrooms, data = total_bedrooms)
+pred.Prices = predict(priceBedRoomModel,data = total_bedrooms)
+
+p1 <- ggplot(total_bedrooms, aes(x = total_bedrooms, y = Prices))
+p1 + geom_point(col="blue") + geom_line(aes(y = pred.Prices,col="orange"))+ geom_smooth() 
+
+```
+
+Mostly the blocks have rooms under 2000 and very few of the housing blocks have room more than that. As price is increasing the total number of bedrooms in a block decreasing may because the number of houses with less prices from range 100000 to 200000 are more. 
+
+***
+\newpage
+
+#### **Ocean Proximity  Vs. House value**\
+
+```{r fig.height=5, fig.width=10,warning=FALSE,message=FALSE,tidy=TRUE}
+ocean_proximity   = as.data.frame(cbind(housingdata$ocean_proximity  , housingdata$median_house_value))
+ocean_proximity   = ocean_proximity  [complete.cases(ocean_proximity ),]
+
+colnames(ocean_proximity ) = c("ocean_proximity","Prices")
+priceOceanModel = lm(Prices ~ ocean_proximity, data = ocean_proximity)
+pred.Prices = predict(priceOceanModel,data = ocean_proximity)
+
+par(mar=c(5, 4, 4, 8), xpd=TRUE)
+plot_colors = c("Darkorange", "Darkgrey", "Dodgerblue", "Red", "Green")
+plot(Prices ~ ocean_proximity, data = ocean_proximity, col = plot_colors[ocean_proximity], pch = as.numeric(ocean_proximity))
+
+legend("topright", c("1H Ocean", "INLAND", "ISLAND", "NEAR BAY", "NEAR OCEAN"), inset=c(-0.2,0),
+       col = plot_colors, lty = c(1, 2, 3, 4, 5), pch = c(1, 2, 3, 4, 5), cex = 0.75)
+
+```
+
+Based on the individual scatter plot line density, it seems that most number of the houses are near ocean. Also the number of cheap houses are more in Inland compared to houses near bay area or ocean. 
+
+
+***
+
+## **Model Building**
+
+### **Tree Model Interaction**
+
+```{r}
+drops <- c("ocean_proximity")
+dataset = housingdata[, !(names(housingdata) %in% drops)]
+form = as.formula(median_house_value ~ .)
+fit = rpart(form, data = dataset)
+
+prp(fit, type = 4, extra = 101, digits=-3, box.palette = "GnYlRd", 
+    main = "Interaction in a Tree Model (Original Dataset)", fallen.leaves = TRUE)
+
+```
+
+The above tree models giving an overview of what could be the most important predictors for us. The important variables which we might want to consider in model building based on importance are shown in below table - \
+
+```{r echo=FALSE}
+impVariables = as.data.frame(varImp(fit))
+impVariables = data.frame(overall = impVariables$Overall, 
+                          Predictors   = rownames(impVariables))
+impTable = impVariables[order(impVariables$overall,decreasing = T),]
+impTable %>%
+  kbl(caption = "Important Predictors Table In Decreasing Order of Importance Score") %>%
+  kable_paper("hover", full_width = F)
+
+```
+
+### **Collinearity Check**
+
+We now go ahead further to analysis the relationship between the different variables present in the data. The are multiple ways to check the collinearity, however, we plan to visualize it using `corrplot`. The correlations using a visual correlation matrix between all the variables is shown below.
+
+In order to generate a pair-wise correlation matrix using cor() functions, we will need only the numeric variables. So just for the sake of generating the matrix, lets convert the `ocean_proximity` which is a factor variable in to a numeric variable. 
+
+```{r echo=TRUE}
+data = na.omit(housingdata)
+data$ocean_proximity = as.numeric(data$ocean_proximity)
+corrplot(cor(data[sapply(data, is.numeric)]), method = "number",
+         tl.cex = 0.75, tl.pos = "lt", tl.col = "dodgerblue")
+```
+
+From the above correlation matrix, it is clearly visible that median_income and median_house_value are highly correlated (the coefficient of correlation values is +0.69). It is also confirmed that there are multiple predictor variables like households and total bedroom which are highly correlated. 
+
+Thus with the above paired correlation plot, we have an overview of how the different variables in the dataset are correlated to each other. 
+
+```{r eval=FALSE, include=FALSE}
+# Correlation in absolute terms
+corr = abs(cor(data[sapply(data, is.numeric)]))
+colors = dmat.color(corr)
+order = order.single(corr)
+
+cpairs(data,
+       order,
+       panel.colors = colors,
+       border.color = "grey70",
+       gap = 0.45,
+       main = "Scatter Plot of variables colored by correlation",
+       show.points = TRUE,
+       pch = 21,
+       bg = rainbow(5)[data$ocean_proximity])
+```
+
+We now proceed with another collinearity check i.e. **the Variance Inflation Factor (VIF)**. We go ahead and fit a model using all the available predictors. 
+
+```{r}
+model_add_all = lm(median_house_value ~ ., data = housing)
+```
+
+We now calculate the variance inflation factor for each of the predictors of the model. 
+
+```{r}
+vif(model_add_all)
+sum(vif(model_add_all) > 5)
+```
+
+In practice, any VIF greater than 5 is cause for concern. From the above results, we can see that there are significant multicollinearity issues in multiple predictor variables of the model. Total 6 predictors have VIF of greater than 5 which account for the multicollinearity issue. In the next section, we attempt to fit different models on the data in order to resolve the multicollinearity problem. We attempt to find a smaller model which still fits well and does not have the collinearity issue. 
+
+
+
+### **Exhaustive Search**
+
+```{r}
+model_all_subs = summary(regsubsets(median_house_value ~ ., data = trainset))
+```
+
+This gives us a summary of the subsets of the predictors to be used for models have 1-8 predictors. 
+
+```{r}
+model_all_subs$which
+```
+
+Here, we can see which predictors have been chosen. For instance, we we wish for a model of only one predictor, then `median_income` should be our choice. Similarly, if we wish to go for a model with three predictors, then `housing_median_age`, `median_income` and `ocean_proximityINLAND` should be our chosen set of predictors.
+
+Further, we filter the model with the best adjusted R^2 value among the different subset models.
+
+```{r}
+best_r2_mode_idx = which.max(model_all_subs$adjr2)
+model_all_subs$which[best_r2_mode_idx, ]
+model_all_subs$adjr2[best_r2_mode_idx]
+```
+
+We can see that the model having the above predictors (i.e. marked as TRUE) achieves the highest adjusted R2 value of `r model_all_subs$adjr2[best_r2_mode_idx]` as compared to the other subsets. 
+
+**Let's fit this model and select it for later comparison:**
+
+```{r}
+
+# select the first model for investigation
+firstModel = lm(median_house_value ~ longitude + latitude + housing_median_age + total_rooms +
+                        total_bedrooms + population + median_income + ocean_proximity, data = trainset)
+```
+
+
+### **Interaction Models**
+
+In order to get a broader idea of how the different predictors interact with each other and what effect these interactions have on the model and prediction of the median house values, we fit full two way and three way interaction models. We compare and contrast three different model. First will the full additive model as a base model and then a full two way and three way interaction model with all the predictors having interactions with one another. 
+
+```{r}
+model_add_all = lm(median_house_value ~ ., data = trainset)
+model_inter_2_all = lm(median_house_value ~ . ^ 2, data = trainset)
+model_inter_3_all = lm(median_house_value ~ . ^ 3, data = trainset)
+```
+
+
+```{r echo=TRUE}
+interaction_results = data.frame(
+  "Adjusted R-Squared" = c("Full Additive Model" = summary(model_add_all)$adj.r.squared,
+                  "Full Two Way Interaction Model" = summary(model_inter_2_all)$adj.r.squared,
+                  "Full Three Way Interaction Model" = summary(model_inter_3_all)$adj.r.squared),
+  "Number of Beta Estimates" = c("Full Additive Model" = length(summary(model_add_all)$coefficients),
+          "Full Two Way Interaction Model" = length(summary(model_inter_2_all)$coefficients),
+          "Full Three Way Interaction Model" = length(summary(model_inter_3_all)$coefficients)),
+   "AIC" = c("Full Additive Model" = extractAIC(model_add_all)[2],
+                  "Full Two Way Interaction Model" = extractAIC(model_inter_2_all)[2],
+                  "Full Three Way Interaction Model" = extractAIC(model_inter_3_all)[2]))
+
+
+```
+
+**Table Of Interaction Results**
+
+```{r}
+# knitr::kable(interaction_results)
+interaction_results %>%
+  kbl(caption = "Interaction Results") %>%
+  kable_paper("hover", full_width = F)
+
+```
+
+Based on the test results, we choose the **"Full Three Way Interaction Model"** for later comparison. 
+
+```{r}
+# select the second model for diagnostics 
+secondModel = model_inter_3_all
+
+```
+
+***
+
+From the above summarized results obtained from the analysis of two way and three way interaction models, we can see that the three way interaction model has the highest adjusted r-squared value and further, it also has the minimum AIC. While having the maximum number of beta estimates, we had expected the three way full model to over fit the data have a higher AIC, however, it has the minimum AIC. The number of beta parameters to be estimated for the full three way model is 836 which makes this model a bit complex. Thus, we will now perform further analysis to narrow down a model which is less complex and can have significantly close results as the full three way model.
+
+### **Linear & Quadractic Interaction**
+
+
+```{r, eval=TRUE}
+model_full = lm(median_house_value ~ ., data = trainset)
+# bestAICModel = stepAIC(model_full, direction="both")
+# bestAICModel$anova
+
+# Model_0 
+model_0 = lm(median_house_value~.^2 - total_rooms:population:ocean_proximity 
+          - longitude:total_bedrooms:ocean_proximity
+          - housing_median_age:total_bedrooms:ocean_proximity
+          - housing_median_age:total_rooms:households
+          - total_rooms:total_bedrooms:population
+          - housing_median_age:population:median_income
+          - housing_median_age:households:median_income 
+          - latitude:population:households 
+          - total_rooms:households:median_income  
+          - latitude:total_rooms:total_bedrooms  
+          - longitude:housing_median_age:total_bedrooms  
+          - housing_median_age:total_rooms:total_bedrooms  
+          - longitude:total_rooms:households  
+          - housing_median_age:total_rooms:population  
+          - longitude:housing_median_age:population  
+          - longitude:latitude:total_bedrooms  
+          - longitude:latitude:households  
+          - total_rooms:population:households  
+          - housing_median_age:total_bedrooms:population  
+          + total_rooms:total_bedrooms:population, data = trainset)
+
+#find insignificant 
+#summary(model_0)$coefficients[summary(model_0)$coefficients[ ,4] >= 0.05,]
+
+# Model_1, Removed insignificant from previous model_0
+model_1 = update(model_0,~.- population                                  
+                              - households                                  
+                              - ocean_proximityINLAND                       
+                              - longitude:population                        
+                              - longitude:households                        
+                              - longitude:ocean_proximity            
+                              - latitude:ocean_proximity          
+                              - housing_median_age:ocean_proximity
+                              - housing_median_age:ocean_proximity
+                              - housing_median_age:ocean_proximity
+                              - total_rooms:total_bedrooms                  
+                              - total_rooms:ocean_proximity
+                              - total_rooms:ocean_proximity
+                              - total_bedrooms:ocean_proximity
+                              - total_bedrooms:ocean_proximity
+                              - population:median_income                    
+                              - population:ocean_proximity
+                              - households:median_income                    
+                              - households:ocean_proximity
+                              - households:ocean_proximity
+                              - median_income:ocean_proximity
+                              - median_income:ocean_proximity)
+
+
+#model_2
+model_2 =lm(median_house_value ~ longitude + latitude + housing_median_age + total_rooms 
+            + total_bedrooms + population + households + median_income + ocean_proximity
+            + housing_median_age*median_income*population*ocean_proximity*total_bedrooms*total_rooms
+            + I(longitude ^ 2)
+            + I(latitude ^ 2)
+            + I(housing_median_age ^ 2)
+            + I(total_rooms ^ 2)
+            + I(population ^ 2)
+            + I(households ^ 2)
+            + I(median_income ^ 2)
+            , data = trainset)
+
+#model_3
+model_3 = lm(median_house_value ~.+ longitude:latitude + longitude:housing_median_age +
+    longitude:total_rooms + longitude:total_bedrooms + longitude:population +
+    longitude:households + longitude:median_income + longitude:ocean_proximity +
+    latitude:housing_median_age + latitude:total_rooms + latitude:total_bedrooms +
+    latitude:population + latitude:households + latitude:median_income +
+    latitude:ocean_proximity + housing_median_age:total_rooms +
+    housing_median_age:total_bedrooms + housing_median_age:population +
+    housing_median_age:households + housing_median_age:median_income +
+    housing_median_age:ocean_proximity + total_rooms:total_bedrooms +
+    total_rooms:population + total_rooms:households + total_rooms:median_income +
+    total_rooms:ocean_proximity + total_bedrooms:population +
+    total_bedrooms:households + total_bedrooms:median_income +
+    total_bedrooms:ocean_proximity + population:households +
+    population:median_income + population:ocean_proximity + households:median_income +
+    households:ocean_proximity + median_income:ocean_proximity +
+    longitude:latitude:housing_median_age + longitude:latitude:total_rooms +
+    longitude:latitude:population + longitude:latitude:median_income +
+    longitude:latitude:ocean_proximity + longitude:housing_median_age:total_rooms +
+    longitude:housing_median_age:households + longitude:housing_median_age:median_income +
+    longitude:housing_median_age:ocean_proximity + longitude:total_rooms:total_bedrooms +
+    longitude:total_rooms:population + longitude:total_rooms:median_income +
+    longitude:total_rooms:ocean_proximity + longitude:total_bedrooms:population +
+    longitude:total_bedrooms:households + longitude:total_bedrooms:median_income +
+    longitude:population:households + longitude:population:median_income +
+    longitude:population:ocean_proximity + longitude:households:median_income +
+    longitude:households:ocean_proximity + longitude:median_income:ocean_proximity +
+    latitude:housing_median_age:total_rooms + latitude:housing_median_age:total_bedrooms +
+    latitude:housing_median_age:population + latitude:housing_median_age:households +
+    latitude:housing_median_age:median_income + latitude:housing_median_age:ocean_proximity +
+    latitude:total_rooms:population + latitude:total_rooms:households +
+    latitude:total_rooms:median_income + latitude:total_rooms:ocean_proximity +
+    latitude:total_bedrooms:population + latitude:total_bedrooms:households +
+    latitude:total_bedrooms:median_income + latitude:total_bedrooms:ocean_proximity +
+    latitude:population:median_income + latitude:population:ocean_proximity +
+    latitude:households:median_income + latitude:households:ocean_proximity +
+    latitude:median_income:ocean_proximity + housing_median_age:total_rooms:median_income +
+    housing_median_age:total_rooms:ocean_proximity + housing_median_age:total_bedrooms:households +
+    housing_median_age:total_bedrooms:median_income + housing_median_age:population:households +
+    housing_median_age:population:ocean_proximity + housing_median_age:households:ocean_proximity +
+    housing_median_age:median_income:ocean_proximity + total_rooms:total_bedrooms:households +
+    total_rooms:total_bedrooms:median_income + total_rooms:total_bedrooms:ocean_proximity +
+    total_rooms:population:median_income + total_rooms:households:ocean_proximity +
+    total_rooms:median_income:ocean_proximity + total_bedrooms:population:households +
+    total_bedrooms:population:median_income + total_bedrooms:population:ocean_proximity +
+    total_bedrooms:households:median_income + total_bedrooms:households:ocean_proximity +
+    total_bedrooms:median_income:ocean_proximity + population:households:median_income +
+    population:households:ocean_proximity + population:median_income:ocean_proximity +
+    households:median_income:ocean_proximity + total_rooms:total_bedrooms:population, data = trainset)
+
+#model_4
+model_4 = lm(median_house_value ~.+ longitude:latitude + longitude:housing_median_age +
+    longitude:total_rooms + longitude:total_bedrooms + longitude:population +
+    longitude:households + longitude:median_income + longitude:ocean_proximity +
+    latitude:housing_median_age + latitude:total_rooms + latitude:total_bedrooms +
+    latitude:population + latitude:households + latitude:median_income +
+    latitude:ocean_proximity + housing_median_age:total_rooms +
+    housing_median_age:total_bedrooms + housing_median_age:population +
+    housing_median_age:households + housing_median_age:median_income +
+    housing_median_age:ocean_proximity + total_rooms:total_bedrooms +
+    total_rooms:population + total_rooms:households + total_rooms:median_income +
+    total_rooms:ocean_proximity + total_bedrooms:population +
+    total_bedrooms:households + total_bedrooms:median_income +
+    total_bedrooms:ocean_proximity + population:households +
+    population:median_income + population:ocean_proximity + households:median_income , data = trainset)
+
+```
+
+**Comparison Results for above 5 fitted models**
+
+```{r}
+interaction_results = data.frame(
+  "Adjusted R-Squared" = c("Model_0" = summary(model_0)$adj.r.squared,
+                  "Model_1" = summary(model_1)$adj.r.squared,
+                  "Model_2" = summary(model_2)$adj.r.squared,
+                  "Model_3" = summary(model_3)$adj.r.squared,
+                  "Model_4" = summary(model_4)$adj.r.squared),
+  "Number of Beta Estimates" = c("Model_0" = length(summary(model_0)$coefficients),
+          "Model_1" = length(summary(model_1)$coefficients),
+          "Model_2" = length(summary(model_2)$coefficients),
+          "Model_3" = length(summary(model_3)$coefficients),
+          "Model_4" = length(summary(model_4)$coefficients)),
+   "AIC" = c("Model_0" = extractAIC(model_0)[2],
+                  "Model_1" = extractAIC(model_1)[2],
+                  "Model_2" = extractAIC(model_2)[2],
+                  "Model_3" = extractAIC(model_3)[2],
+                  "Model_4" = extractAIC(model_4)[2]))
+                  
+
+# knitr::kable(interaction_results)
+interaction_results %>%
+  kbl(caption = "Interaction Results") %>%
+  kable_paper("hover", full_width = F)
+
+# Select model_1 and model_3 for further investigation
+thirdModel  = model_1
+fourthModel = model_3
+
+
+```
+### **Transformations**
+
+```{r}
+par(mfrow=c(1,3))
+boxcox(firstModel, plotit = TRUE)
+boxcox(secondModel, plotit = TRUE)
+boxcox(thirdModel, plotit = TRUE)
+```
+
+```{r}
+# Log Transforms
+logModel = lm(log(median_house_value) ~.^2 + housing_median_age*median_income*ocean_proximity, data = trainset)
+
+#first log Model
+firstlogModel = lm(log(median_house_value) ~ longitude + latitude + housing_median_age + 
+    total_rooms + total_bedrooms + population + households + 
+    median_income + ocean_proximity + longitude:latitude + longitude:housing_median_age + 
+    longitude:total_rooms + longitude:total_bedrooms + longitude:households + 
+    longitude:median_income + latitude:housing_median_age + 
+    latitude:total_rooms + latitude:total_bedrooms + latitude:households + 
+    latitude:median_income + housing_median_age:total_rooms + 
+    housing_median_age:total_bedrooms + housing_median_age:population + 
+    housing_median_age:households + housing_median_age:median_income + 
+    total_rooms:population + 
+    total_rooms:households + total_rooms:median_income + 
+    total_bedrooms:population + total_bedrooms:households + total_bedrooms:median_income + 
+    population:households + 
+    population:median_income + 
+    median_income:ocean_proximity - total_rooms:total_bedrooms, data = trainset)
+
+
+#second Log Model
+secondlogModel = lm(log(median_house_value) ~ longitude + latitude + housing_median_age + 
+    total_rooms + total_bedrooms + population + households + 
+    median_income + ocean_proximity + longitude:latitude + longitude:housing_median_age + 
+    longitude:total_rooms + longitude:total_bedrooms + longitude:households + 
+    longitude:median_income + longitude:ocean_proximity + latitude:housing_median_age + 
+    latitude:total_rooms + latitude:total_bedrooms + latitude:households + 
+    latitude:median_income + latitude:ocean_proximity + housing_median_age:total_rooms + 
+    housing_median_age:total_bedrooms + housing_median_age:population + 
+    housing_median_age:households + housing_median_age:median_income + 
+    housing_median_age:ocean_proximity + total_rooms:population + 
+    total_rooms:households + total_rooms:median_income + total_rooms:ocean_proximity + 
+    total_bedrooms:population + total_bedrooms:households + total_bedrooms:median_income + 
+    total_bedrooms:ocean_proximity + population:households + 
+    population:median_income + population:ocean_proximity + households:median_income + 
+    households:ocean_proximity + median_income:ocean_proximity + 
+    housing_median_age:median_income:ocean_proximity, data = trainset)
+
+#Third Log Model
+thirdlogModel = lm(log(median_house_value)~median_income+total_rooms+
+               housing_median_age*households*ocean_proximity, data=trainset)
+
+```
+
+
+
+## **Model Diagnostics**
+
+We have 5 models to diagnose: \
+
+-- `firstModel`,  
+-- `secondModel`and   
+-- `thirdModel` and two log transformed models,  
+-- `firstlogModel` and  
+-- `secondlogModel`.  
+
+#### **Checking for Model Assumptions**
+
+In this section, we perform certain diagnostics on our selected models from the previous sections. The purpose of this section is to check the model assumptions of linearity and constant variance which is often called as homoscedasticity. Further, we will plot histograms of the residuals for the shortlisted models. In order to perform the diagnostics on our shortlisted models, we will write a helper function called `diagnostics` in order to avoid duplication of code and present the models in an easy to under manner. Since the Shapiro-Wilk Normality test in R only supports data upto 5000 observations, we go ahead and use the Kolmogorov-Smirnov (K-S) Test for checking the normality of our model residuals. 
+
+```{r,fig.height=5, fig.width=10,warning=FALSE,message=FALSE,tidy=TRUE}
+diagnostics = function(model, plots = TRUE, tests = TRUE) {
+  if(plots == TRUE) {
+    
+    par(mfrow = c(1,3))
+    plot(fitted(model), resid(model), xlab = "Fitted", ylab = "Residuals",
+         main = 'Fitted vs Residuals', col = 'dodgerblue')
+    abline(h = 0, lwd = 3, col = 'tomato')
+    
+    qqnorm(resid(model), main = 'Q-Q Plot', col = 'dodgerblue')
+    qqline(resid(model), lwd = 3, col = 'tomato')
+    
+    hist(resid(model), main = 'Histogram of Residuals', xlab = "Residuals", ylab = 'frequency',
+         col = "dodgerblue")
+  }
+  
+  if (tests == TRUE) {
+    bp_test = bptest(model)
+    ks_test = ks.test(resid(model), "pnorm")
+    test_results = data.frame(
+      "Breusch-Pagan Test" = c("Test Statistic" = bp_test$statistic, 
+                               "p-value" = bp_test$p.value,
+                               "Decision @ alpha = 0.05" = ifelse(bp_test$p.value < 0.05, 
+                                        "Rejects Null Hypothesis", "Fail to Reject   Null Hypothsis"),
+                               "Comment" = ifelse(bp_test$p.value < 0.05, 
+                                         "Constant Variance Assumption is Violated", 
+                                         "Constant Variance Assumption is not Violated")),
+    
+    "Kolmogorov-Smirnov (K-S) Test" = c("Test Statistic" = ks_test$statistic, 
+                               "p-value" = ks_test$p.value,
+                               "Decision @ alpha = 0.05" = ifelse(ks_test$p.value < 0.05, 
+                               "Rejects Null Hypothesis", "Fail to Reject Null Hypothsis"),
+                                "Comment" = ifelse(ks_test$p.value < 0.05, 
+                                                   "Normality is Suspect", 
+                                                   "Normality is not Suspect")))
+  
+    
+    # knitr::kable(test_results)
+    test_results %>%
+    kbl(caption = "Test Results") %>%
+    kable_paper("hover", full_width = F)
+  }
+}
+
+
+
+
+```
+
+We now run our diagnostics function on the shortlisted model to check for the model assumptions. 
+
+```{r,fig.height=5, fig.width=10,warning=FALSE,message=FALSE,tidy=TRUE}
+
+diagnostics(firstModel)
+diagnostics(secondModel)
+diagnostics(thirdModel)
+diagnostics(firstlogModel)
+diagnostics(secondlogModel)
+
+```
+
+
+By looking at the plots and the results of the tests, we can get the idea that even our shortlisted models violate both the normality and the constant variance assumptions. The results of both the tests seems to reject the null hypothesis and suggest that both normality and constant variance of the residuals are under suspect. Thus, we can say that since the assumptions are violated by the models, these models might not be fit for performing inference analysis. However, since the objective of our study is to fit an accurate model which can assist us in predicting the median housing values, we can overlook the fact that the models violate the assumptions and can proceed on our hunt to search for the most apt model for predicting the median housing values. Since we are only interested in prediction, we don’t need to worry about correlation vs causation, and we don’t need to worry about model assumptions.
+
+### **Check for Overfitting**
+
+In order to evaluate and check for overfitting for our shortlisted models, we will utilize the leave-one-out cross-validated RMSE (LOOCV RMSE). This would not only provide us with the errors in the testing data split, but will also help us identify if any of the shortlisted models are overfitting the data. The shortlisted model with the lowest LOOCV RMSE can be termed as the best available model for predicting housing prices. 
+
+In order to compare the shortlisted models, we first preare a helper function names `calc_loocv_rmse` as follows:
+
+```{r}
+calc_loocv_rmse = function(model, isLog = FALSE) {
+  if (isLog == FALSE) {
+    sqrt(mean((resid(model) / (1 - hatvalues(model))) ^ 2))
+  }
+  else {
+    sqrt(mean(((trainset$median_house_value - exp((fitted(model)))) / (1 - hatvalues(model))) ^ 2))
+  }
+}
+
+loocv_results = data.frame(
+  "LOOCV RMSE" = c("firstModel" = calc_loocv_rmse(firstModel),
+                  "secondModel" = calc_loocv_rmse(secondModel),
+                  "thirdModel" = calc_loocv_rmse(thirdModel),
+                  "firstlogModel" = calc_loocv_rmse(firstlogModel, isLog = TRUE),
+                  "secondlogModel" = calc_loocv_rmse(secondlogModel, isLog = TRUE))
+)
+
+    
+  # knitr::kable(loocv_results)
+  loocv_results %>%
+  kbl(caption = "LOOCV RMSE Results") %>%
+  kable_paper("hover", full_width = F)
+  
+```
+
+To find models for prediction, we would use selection criterion that implicitly penalize larger models, such as LOOCV RMSE. So long as the model does not over-fit, we do not actually care how large the model becomes. Explaining the relationship between the variables is not our goal here, we simply want to know the predicted median housing values and thus should go for the model with the least LOOCV RMSE.
+
+***
+
+## **Results**
+
+In this section, we present the final results of our shortlisted model and provide logic and explanations behind finalising the most appropriate model for the prediction task. 
+
+### **Evaluation of Model on Testing Data**
+
+In order to summarize the results of our model on the test data, we first create a helper function which returns the RMSE and percentage error for each of the models. 
+
+
+```{r warning=FALSE}
+testset_results = function(model, isLog = FALSE) {
+  if (isLog == FALSE) {
+    actual = testset$median_house_value
+    preds = predict(model, testset)
+    rmse = sqrt(sum((actual - preds)^2) / length(actual))
+    percentage_error = (sum(abs(preds - actual) / actual) / length(actual)) * 100
+    return (result_list = list(rmse, percentage_error))
+  }
+  else {
+    actual = testset$median_house_value
+    preds = exp(predict(model, testset))
+    rmse = sqrt(sum((actual - preds)^2) / length(actual))
+    percentage_error = (sum(abs(preds - actual) / actual) / length(actual)) * 100
+    return (result_list = list(rmse, percentage_error))
+  }
+}
+
+```
+
+
+We then use the above above function to summarize our results in the following table. 
+
+```{r warning=FALSE}
+
+
+final_results = data.frame(
+  "RMSE" = c("firstModel" = testset_results(firstModel)[[1]],
+                  "secondModel" = testset_results(secondModel)[[1]],
+                  "thirdModel" = testset_results(thirdModel)[[1]],
+                  "firstlogModel" = testset_results(firstlogModel, isLog = TRUE)[[1]],
+                  "secondlogModel" = testset_results(secondlogModel, isLog = TRUE)[[1]]),
+  
+  "Model Paramters" = c("firstModel" = length(summary(firstModel)$coefficients),
+                  "secondModel" = length(summary(secondModel)$coefficients),
+                  "thirdModel" = length(summary(thirdModel)$coefficients),
+                  "firstlogModel" = length(summary(firstlogModel, isLog = TRUE)$coefficients),
+                  "secondlogModel" = length(summary(secondlogModel, isLog = TRUE)$coefficients)),
+  
+  "Percentage Error" = c("firstModel" = testset_results(firstModel)[[2]],
+                  "secondModel" = testset_results(secondModel)[[2]],
+                  "thirdModel" = testset_results(thirdModel)[[2]],
+                  "firstlogModel" = testset_results(firstlogModel, isLog = TRUE)[[2]],
+                  "secondlogModel" = testset_results(secondlogModel, isLog = TRUE)[[2]]))
+
+
+# knitr::kable(final_results)
+final_results %>%
+kbl(caption = "FINAL Results") %>%
+kable_paper("hover", full_width = F)
+
+```
+
+From the above results, we can clearly see that the `thirdModel` has the **minimum RMSE** as well as the **minimum LOOCV RMSE**. This means that our thirdModel best fits the data and would be most suitable for prediction. Further, having a lower LOOVC RMSE means that the model does not over fit the data. We can also see that while the second model has more model parameters but still has a higher RMSE. 
+
+From the percentage error column, we can see that our chosen `thirdModel` produces a percentage error of around 24.24 on the test dataset which is significantly close to the lowest percentage error achieved by the `secondLogModel.` However, since the RMSE and LOOCV RMSE of the `secondLogModel` is significantly higher than the `thirdModel`, we go ahead with our choice of the `thirdModel` as the most proffered model for `median_house_value` prediction. 
+
+### **Predicting Median House Value**
+
+Since we have now narrowed down on the most preferred model for predicting median house value, we can use this model to perform some predictions as follows:
+
+**SELECTED MODEL:** `thirdModel`
+
+
+```{r}
+new_house = data.frame(longitude = -122.3, latitude = 37.85,
+                       housing_median_age = 50, total_rooms = 1120,
+                       total_bedrooms = 283, population = 697,
+                       households = 264, median_income = 2.1250,
+                       ocean_proximity = 'NEAR BAY')
+predict(thirdModel, newdata = new_house)
+
+```
+
+Thus, for a new house with the parameters as above, the median house value predicted by our model is `r predict(thirdModel, newdata = new_house)` in Dollars.
+
+## **Discussion**
+
+```{r}
+finalChosenModel = thirdModel
+```
+
+Based on the model diagnostics results, evaluation of models on testing data and the prediction results, we finalized `thirdModel` model as our final one, even of its issues with multicollinearity, its still the best in terms of `RMSE` & `Percentage Error` value.
+
+
+```{r}
+par(mfrow = c(2, 2))
+plot(finalChosenModel, main = "Chosen Model")
+```
+
+**Most Significant Predictors**
+
+```{r,warning=FALSE,message=FALSE}
+length(coef(finalChosenModel))
+names(coef(finalChosenModel))
+
+```
+
+During our initial analysis when we plot the **"Map Of Housing Prices in California"**, we thought that the categorical variable `ocean_proximity` will be the most significant predictor but based on the results we are seeing it is not significant. Let's see the p-value statistics for this predictor -  
+
+
+```{r}
+coef(summary(finalChosenModel))["ocean_proximityNEAR OCEAN", ]
+```
+
+A p-value is higher than 0.05 (> 0.05) which means it not statistically significant and indicates strong evidence of the null hypothesis.  
+
+
+Lets see if we can find more: 
+```{r}
+summary(finalChosenModel)$coefficients[summary(finalChosenModel)$coefficients[ ,4] > 0.05,]
+
+```
+
+
+**Proportion of the significant predictors.**
+```{r}
+sum(summary(finalChosenModel)$coefficients[ ,4] < 0.05)/length(coef(finalChosenModel))
+```
+
+
+**List of Significant Predictors**
+```{r}
+summary(finalChosenModel)$coefficients[summary(finalChosenModel)$coefficients[ ,4] < 0.05,]
+
+```
+
+*Proportion of variation in `House Prices` explained by chosen predictors.*
+```{r}
+summary(finalChosenModel)$r.squared 
+```
+
+`r summary(finalChosenModel)$r.squared ` represents the proportion of the variance for a housing prices explained by an the above predictors by the best model. 
+
+
+## **Appendix**
+
+This section has the code and analysis that is used during the report creation but was not included to avoid cluttering.  
+
+Summary of the chosen models: 
+
+```{r}
+summary(firstModel)
+summary(secondModel)
+summary(thirdModel)
+summary(firstlogModel)
+summary(secondlogModel)
+```
+
+
+Collinearity and Correlation Analysis Plot (Not included in the main report) but 
+used during the data analysis. 
+
+```{r}
+# Correlation in absolute terms
+corr = abs(cor(data[sapply(data, is.numeric)]))
+colors = dmat.color(corr)
+order = order.single(corr)
+
+cpairs(data,
+       order,
+       panel.colors = colors,
+       border.color = "grey70",
+       gap = 0.45,
+       main = "Scatter Plot of variables colored by correlation",
+       show.points = TRUE,
+       pch = 21,
+       bg = rainbow(5)[data$ocean_proximity])
+
+```
+
+This project work is for STAT420 course work and is created by: 
+
+1. Anant Ashutosh Sharma (NetId: anantas2)
+2. Harpreet S. Siddhu" (NetId: hsiddhu2)
+
+
+
